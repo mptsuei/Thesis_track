@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "StudentProgress": {
+      "title": "Student Thesis Progress",
+      "description": "Progress tracking for a student's thesis milestones and number-line stages",
+      "type": "object",
+      "properties": {
+        "studentId": {
+          "type": "string",
+          "description": "Unique identifier for the student or Auth UID",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentName": {
+          "type": "string",
+          "description": "Name of the student",
+          "maxLength": 100
+        },
+        "studentEmail": {
+          "type": "string",
+          "description": "Email address of the student",
+          "maxLength": 150
+        },
+        "thesisTopic": {
+          "type": "string",
+          "description": "Title or research topic of the thesis",
+          "maxLength": 300
+        },
+        "currentPhase": {
+          "type": "number",
+          "description": "Active thesis phase (1: Proposal Defense, 2: Final Defense)"
+        },
+        "currentStepNumber": {
+          "type": "number",
+          "description": "The latest forward step global number reached (1-27)"
+        },
+        "currentStepTitle": {
+          "type": "string",
+          "description": "The latest forward step title"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar photo URL from Google Auth"
+        },
+        "completedSteps": {
+          "type": "array",
+          "description": "List of completed milestone step IDs across both phases. Strictly append-only (cannot delete)."
+        },
+        "stepNotes": {
+          "type": "object",
+          "description": "Custom notes or reminders recorded for each step"
+        },
+        "stepDates": {
+          "type": "object",
+          "description": "Completion or target date recorded for each step"
+        },
+        "lastUpdated": {
+          "type": "string",
+          "description": "ISO timestamp of the latest update"
+        }
+      },
+      "required": ["studentId", "studentName", "completedSteps"]
+    }
+  },
+  "firestore": {
+    "/student_progress/{studentId}": {
+      "schema": "StudentProgress",
+      "description": "Collection of student thesis progress number-line records"
+    }
+  }
+}

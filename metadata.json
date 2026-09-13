@@ -1,0 +1,6 @@
+{
+  "name": "崔老師指導論文寫作平台",
+  "description": "專為崔老師指導研究生打造的專屬系統，聚焦兩大核心目的：第一、研究生必讀指導規範與學長姐經驗；第二、論文進度控管（二十七步數線單向推進登錄與全體學生即時看板）。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

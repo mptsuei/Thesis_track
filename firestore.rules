@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Health / connection test document
+    match /test/connection {
+      allow read: if true;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidStudentProgress(data) {
+      return data.studentId is string && data.studentId.size() <= 128 &&
+             data.studentName is string && data.studentName.size() <= 100 &&
+             data.completedSteps is list && data.completedSteps.size() <= 35 &&
+             (!('currentPhase' in data) || (data.currentPhase is number)) &&
+             (!('studentEmail' in data) || (data.studentEmail is string && data.studentEmail.size() <= 150));
+    }
+
+    match /student_progress/{studentId} {
+      // 任何人皆可公開檢視全體學生進度看板，不需登入 Google 帳號
+      allow get: if true;
+      allow list: if true;
+      
+      // 學生登錄或老師建立進度紀錄
+      allow create: if isValidStudentProgress(incoming());
+                       
+      // 更新進度紀錄：學生推進或老師在管理模式調整進度
+      allow update: if isValidStudentProgress(incoming());
+                       
+      // 老師管理權限：學生畢業或離校後刪除該學生帳號與進度資料
+      allow delete: if true;
+    }
+  }
+}
