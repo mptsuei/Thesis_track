@@ -28,7 +28,12 @@ import {
   Save,
   AlertTriangle,
   LogOut,
-  Check
+  Check,
+  UserPlus,
+  Eye,
+  EyeOff,
+  Copy,
+  ClipboardList
 } from 'lucide-react';
 import { db, auth } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
@@ -52,24 +57,44 @@ export const StudentsProgressBoard: React.FC<Props> = ({
   const [phaseFilter, setPhaseFilter] = useState<'all' | 'phase1' | 'phase2' | 'graduated'>('all');
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
 
-  // Teacher mode authentication (system credentials: teacher / tsuei888, confidential)
+  // Teacher mode authentication
   const [isTeacher, setIsTeacher] = useState<boolean>(() => {
-    return sessionStorage.getItem('thesis_is_teacher') === 'true';
+    return localStorage.getItem('thesis_is_teacher') === 'true' || sessionStorage.getItem('thesis_is_teacher') === 'true';
   });
   const [showTeacherLoginModal, setShowTeacherLoginModal] = useState(false);
   const [teacherUsername, setTeacherUsername] = useState('');
   const [teacherPassword, setTeacherPassword] = useState('');
+  const [showTeacherPasswordText, setShowTeacherPasswordText] = useState(false);
   const [teacherLoginError, setTeacherLoginError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Teacher Create Student Account State
+  const [showCreateStudentModal, setShowCreateStudentModal] = useState(false);
+  const [newStudentName, setNewStudentName] = useState('');
+  const [newStudentEmail, setNewStudentEmail] = useState('');
+  const [newStudentTopic, setNewStudentTopic] = useState('');
+  const [newStudentPassword, setNewStudentPassword] = useState('');
+  const [isCreatingStudent, setIsCreatingStudent] = useState(false);
+  const [createStudentError, setCreateStudentError] = useState<string | null>(null);
+
+  // Teacher Account Roster State
+  const [showRosterModal, setShowRosterModal] = useState(false);
+  const [rosterSearch, setRosterSearch] = useState('');
+
+  // Password visibility map (per studentId)
+  const [showPasswordMap, setShowPasswordMap] = useState<Record<string, boolean>>({});
 
   // Teacher Action Modals State
   const [editingStudent, setEditingStudent] = useState<StudentProgressRecord | null>(null);
   const [editStepNumber, setEditStepNumber] = useState<number>(1);
   const [editStudentName, setEditStudentName] = useState<string>('');
+  const [editStudentPassword, setEditStudentPassword] = useState<string>('');
+  const [showEditPasswordText, setShowEditPasswordText] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
 
   const [deletingStudent, setDeletingStudent] = useState<StudentProgressRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Toast timer
   useEffect(() => {
@@ -131,20 +156,25 @@ export const StudentsProgressBoard: React.FC<Props> = ({
     return () => unsubscribe();
   }, []);
 
-  // Teacher Login Handler (Independent of Gmail, credentials confidential)
+  // Teacher Login Handler (Confidential, credentials strictly checked)
   const handleTeacherLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const u = teacherUsername.trim().toLowerCase();
     const p = teacherPassword.trim();
 
-    if ((u === 'teacher' || u === 'tsuei') && p === 'tsuei888') {
+    // Accepted teacher admin usernames & passwords
+    const validUsers = ['teacher', 'tsuei', 'mptsuei', 'mptsuei@gmail.com', 'admin'];
+    const validPasswords = ['tsuei888', 'tsuei'];
+
+    if (validUsers.includes(u) && validPasswords.includes(p)) {
       setIsTeacher(true);
+      localStorage.setItem('thesis_is_teacher', 'true');
       sessionStorage.setItem('thesis_is_teacher', 'true');
       setShowTeacherLoginModal(false);
       setTeacherUsername('');
       setTeacherPassword('');
       setTeacherLoginError(null);
-      setToastMessage('✓ 崔老師管理模式已啟動！您現具備刪除畢業生帳號及修改進度之權限。');
+      setToastMessage('✓ 崔老師管理模式已啟動！您現具備新增學生、查閱/重設密碼與調整進度之最高權限。');
     } else {
       setTeacherLoginError('帳號或密碼輸入錯誤，請確認後重新輸入。');
     }
@@ -152,8 +182,85 @@ export const StudentsProgressBoard: React.FC<Props> = ({
 
   const handleTeacherLogout = () => {
     setIsTeacher(false);
+    localStorage.removeItem('thesis_is_teacher');
     sessionStorage.removeItem('thesis_is_teacher');
     setToastMessage('✓ 已結束崔老師管理模式。');
+  };
+
+  // Teacher Create Student Account Handler
+  const handleCreateStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newStudentName.trim();
+    const email = newStudentEmail.trim().toLowerCase();
+    const topic = newStudentTopic.trim();
+    const pwd = newStudentPassword.trim();
+
+    if (!name) {
+      setCreateStudentError('請填寫學生姓名！');
+      return;
+    }
+    if (!email || !email.includes('@')) {
+      setCreateStudentError('請填寫正確格式的學生 Email 帳號！');
+      return;
+    }
+    if (pwd && pwd.length !== 6) {
+      setCreateStudentError('若欲指定密碼，請輸入剛好 6 位數密碼（亦可留空讓學生初次登入時自行建立）！');
+      return;
+    }
+
+    // Check duplicate email
+    const exists = students.some(s => s.studentEmail?.toLowerCase() === email);
+    if (exists) {
+      setCreateStudentError(`此 Email「${email}」已存在於學生名冊中，請勿重複建立！`);
+      return;
+    }
+
+    setIsCreatingStudent(true);
+    setCreateStudentError(null);
+
+    try {
+      const newStudentId = `std_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const today = new Date().toISOString().split('T')[0];
+      const newRecord: StudentProgressRecord = {
+        studentId: newStudentId,
+        studentName: name,
+        studentEmail: email,
+        thesisTopic: topic,
+        currentPhase: 1,
+        currentStepNumber: 1,
+        currentStepTitle: '閱讀文獻找題目',
+        completedSteps: ['p1-1'],
+        stepDates: { 'p1-1': today },
+        stepNotes: {},
+        password: pwd || '',
+        lastUpdated: new Date().toISOString()
+      };
+
+      const docRef = doc(db, 'student_progress', newStudentId);
+      await setDoc(docRef, newRecord);
+
+      setStudents(prev => [newRecord, ...prev]);
+      setToastMessage(`✓ 已成功為「${name}」建立專屬學生帳號（${email}）！${pwd ? `已預設 6 位數密碼：${pwd}` : '學生初次登入時將引導其自行建立 6 位數密碼。'}`);
+      setShowCreateStudentModal(false);
+      setNewStudentName('');
+      setNewStudentEmail('');
+      setNewStudentTopic('');
+      setNewStudentPassword('');
+    } catch (err) {
+      console.error('Create student error:', err);
+      setCreateStudentError(`建立學生帳號失敗：${err}`);
+    } finally {
+      setIsCreatingStudent(false);
+    }
+  };
+
+  // Copy password helper
+  const handleCopyPassword = (studentId: string, pwd: string) => {
+    if (!pwd) return;
+    navigator.clipboard.writeText(pwd);
+    setCopiedId(studentId);
+    setTimeout(() => setCopiedId(null), 2000);
+    setToastMessage(`✓ 已複製密碼「${pwd}」至剪貼簿，可直接提供給學生！`);
   };
 
   // Open Edit Modal for a Student
@@ -161,6 +268,8 @@ export const StudentsProgressBoard: React.FC<Props> = ({
     setEditingStudent(student);
     setEditStepNumber(student.currentStepNumber || student.completedSteps.length || 1);
     setEditStudentName(student.studentName || '');
+    setEditStudentPassword(student.password || '');
+    setShowEditPasswordText(false);
   };
 
   // Save Student Progress Edit (Teacher Mode)
@@ -183,6 +292,7 @@ export const StudentsProgressBoard: React.FC<Props> = ({
       const docRef = doc(db, 'student_progress', editingStudent.studentId);
       const updatedRecord: Partial<StudentProgressRecord> = {
         studentName: editStudentName.trim() || editingStudent.studentName,
+        password: editStudentPassword.trim(),
         currentStepNumber: editStepNumber,
         currentStepTitle: targetStep?.title || `第 ${editStepNumber} 步`,
         currentPhase: (editStepNumber <= 11 ? 1 : 2) as (1 | 2),
@@ -201,7 +311,7 @@ export const StudentsProgressBoard: React.FC<Props> = ({
         return s;
       }));
 
-      setToastMessage(`✓ 已成功將學生「${editStudentName || editingStudent.studentName}」的進度調整為第 ${editStepNumber} 步！`);
+      setToastMessage(`✓ 已成功儲存學生「${editStudentName || editingStudent.studentName}」的進度與密碼設定！`);
       setEditingStudent(null);
     } catch (err) {
       console.error('Save student edit error:', err);
@@ -284,7 +394,7 @@ export const StudentsProgressBoard: React.FC<Props> = ({
       )}
 
       {/* Top Banner */}
-      <div className="bg-gradient-to-r from-blue-50 via-sky-50 to-indigo-50/60 rounded-3xl p-6 sm:p-8 text-stone-900 border border-blue-200/80 shadow-xs relative overflow-hidden">
+      <div className="bg-gradient-to-r from-blue-100/90 via-sky-100/80 to-blue-200/90 rounded-3xl p-6 sm:p-8 text-blue-950 border border-blue-300/80 shadow-xs relative overflow-hidden">
         <div className="absolute right-0 top-0 text-blue-900/10 pointer-events-none translate-x-8 -translate-y-8">
           <Users className="w-80 h-80" />
         </div>
@@ -313,7 +423,7 @@ export const StudentsProgressBoard: React.FC<Props> = ({
             全體研究生論文進度看板
           </h1>
           <p className="text-sm text-blue-900/80 leading-relaxed max-w-3xl">
-            本看板開放公開檢視，彙整所有研究生以 Gmail 帳號登錄之 27 步論文數線進度。遵循崔老師嚴格規範：<strong className="text-blue-950 font-bold">學生操作時僅能向前推進，不可撤銷</strong>。指導教授可使用專屬管理密碼啟用管理模式，進行進度覆核調校或於學生畢業後刪除離校帳號。
+            本看板開放公開檢視，彙整全體研究生之 27 步論文數線進度。由崔老師統一為同學建立 Email 帳號，學生初次登入自訂 6 位數密碼，若忘記密碼可隨時請崔老師查詢或重設。遵循崔老師嚴格規範：<strong className="text-blue-950 font-bold">學生操作時僅能向前推進，不可撤銷</strong>。崔老師可啟用管理模式開立學生帳號、查閱密碼或調整進度。
           </p>
 
           <div className="pt-2 flex flex-wrap items-center gap-3">
@@ -338,13 +448,32 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                 <span>崔老師管理模式登入</span>
               </button>
             ) : (
-              <button
-                onClick={handleTeacherLogout}
-                className="px-4 py-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-bold text-xs flex items-center space-x-1.5 shadow-2xs transition-all cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5 text-amber-800" />
-                <span>結束老師管理模式</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    setCreateStudentError(null);
+                    setShowCreateStudentModal(true);
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs flex items-center space-x-1.5 shadow-xs transition-all cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4 text-stone-950" />
+                  <span>+ 建立新學生帳號</span>
+                </button>
+                <button
+                  onClick={() => setShowRosterModal(true)}
+                  className="px-4 py-2.5 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold text-xs flex items-center space-x-1.5 shadow-2xs transition-all cursor-pointer"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-amber-700" />
+                  <span>📋 學生帳密總覽名冊</span>
+                </button>
+                <button
+                  onClick={handleTeacherLogout}
+                  className="px-4 py-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs flex items-center space-x-1.5 transition-all cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-stone-600" />
+                  <span>結束老師管理模式</span>
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -352,7 +481,7 @@ export const StudentsProgressBoard: React.FC<Props> = ({
 
       {/* Teacher Mode Active Notice Bar */}
       {isTeacher && (
-        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-950 shadow-xs">
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-amber-950 shadow-xs">
           <div className="flex items-start space-x-3">
             <div className="w-9 h-9 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0 mt-0.5">
               <ShieldCheck className="w-5 h-5" />
@@ -362,17 +491,36 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                 <span>崔老師管理模式已啟動（具備最高管理權限）</span>
               </div>
               <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
-                您現在可以對任一學生卡片執行<strong>「✏️ 修改進度」</strong>（任意調整 1~27 步驟）或於學生畢業後執行<strong>「🗑️ 刪除學生 (畢業)」</strong>（自雲端資料庫永久清除離校生紀錄）。
+                您現在可以<strong>「+ 建立新學生帳號」</strong>、<strong>「📋 查看全體學生 6 位數密碼」</strong>、對學生卡片執行<strong>「✏️ 修改進度/密碼」</strong>或於畢業後<strong>「🗑️ 刪除學生 (畢業)」</strong>。
               </p>
             </div>
           </div>
-          <button
-            onClick={handleTeacherLogout}
-            className="shrink-0 px-3.5 py-1.5 rounded-lg bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold text-xs flex items-center space-x-1.5 border border-amber-300 transition-all cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>結束管理模式</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <button
+              onClick={() => {
+                setCreateStudentError(null);
+                setShowCreateStudentModal(true);
+              }}
+              className="px-3.5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs flex items-center space-x-1.5 shadow-xs transition-all cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>+ 建立學生帳號</span>
+            </button>
+            <button
+              onClick={() => setShowRosterModal(true)}
+              className="px-3.5 py-2 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold text-xs flex items-center space-x-1.5 shadow-2xs transition-all cursor-pointer"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-700" />
+              <span>查看學生帳密名冊</span>
+            </button>
+            <button
+              onClick={handleTeacherLogout}
+              className="px-3.5 py-2 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold text-xs flex items-center space-x-1.5 border border-amber-300 transition-all cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>結束模式</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -425,7 +573,7 @@ export const StudentsProgressBoard: React.FC<Props> = ({
           <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="搜尋學生姓名或 Gmail 帳號..."
+            placeholder="搜尋學生姓名或 Email 帳號..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-4 py-2 rounded-xl text-xs border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-stone-50"
@@ -487,17 +635,30 @@ export const StudentsProgressBoard: React.FC<Props> = ({
             <div className="space-y-1.5 max-w-md mx-auto">
               <h3 className="text-base font-bold text-stone-900">目前尚無研究生論文進度登錄資料</h3>
               <p className="text-xs text-stone-500 leading-relaxed">
-                系統資料已完全清空重置。研究生同學可點擊下方按鈕前往「數線登錄進度」，以個人 Gmail 登入並開始登錄 27 步論文進度！
+                本系統已改為由崔老師統一為同學建立 Email 專屬帳號。崔老師可於管理模式點擊下方「建立新學生帳號」直接開立；學生初次登入即可自訂 6 位數密碼並開始登錄 27 步論文進度！
               </p>
             </div>
-            <div className="pt-2">
-              <button
-                onClick={onGoToMyNumberLine}
-                className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
-              >
-                <span>前往我的數線登錄進度</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+            <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
+              {isTeacher ? (
+                <button
+                  onClick={() => {
+                    setCreateStudentError(null);
+                    setShowCreateStudentModal(true);
+                  }}
+                  className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>立即建立第一位學生帳號</span>
+                </button>
+              ) : (
+                <button
+                  onClick={onGoToMyNumberLine}
+                  className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                >
+                  <span>前往學生登入與數線登錄</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
         ) : filteredStudents.length === 0 ? (
@@ -556,9 +717,52 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                             </span>
                           )}
                           <span className="text-xs px-2 py-0.5 rounded-md bg-stone-100 text-stone-600 font-mono">
-                            {student.studentEmail || '未綁定 Gmail'}
+                            {student.studentEmail || '未設定 Email'}
                           </span>
                         </div>
+
+                        {/* Teacher View: Student Password & Account Controls */}
+                        {isTeacher && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-amber-100/90 text-amber-950 font-medium text-[11px] border border-amber-200">
+                              <KeyRound className="w-3 h-3 text-amber-700 shrink-0" />
+                              <span className="font-bold">6 位數密碼：</span>
+                              {student.password ? (
+                                <span className="font-mono font-bold tracking-wider text-amber-950">
+                                  {showPasswordMap[student.studentId] ? student.password : '••••••'}
+                                </span>
+                              ) : (
+                                <span className="text-amber-800 italic">尚未設定（初次登入由學生自訂）</span>
+                              )}
+                            </span>
+                            {student.password ? (
+                              <>
+                                <button
+                                  onClick={() => setShowPasswordMap(prev => ({ ...prev, [student.studentId]: !prev[student.studentId] }))}
+                                  className="p-1 hover:bg-stone-100 rounded text-stone-500 hover:text-stone-700 cursor-pointer"
+                                  title={showPasswordMap[student.studentId] ? '隱藏密碼' : '顯示密碼明碼'}
+                                >
+                                  {showPasswordMap[student.studentId] ? <EyeOff className="w-3.5 h-3.5 text-stone-600" /> : <Eye className="w-3.5 h-3.5 text-stone-600" />}
+                                </button>
+                                <button
+                                  onClick={() => handleCopyPassword(student.studentId, student.password!)}
+                                  className="px-1.5 py-0.5 hover:bg-amber-100 rounded text-amber-800 border border-amber-300 cursor-pointer flex items-center space-x-0.5 text-[10px] font-bold"
+                                  title="複製密碼以提供給忘記密碼之學生"
+                                >
+                                  <Copy className="w-3 h-3" />
+                                  <span>{copiedId === student.studentId ? '已複製！' : '複製密碼'}</span>
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => handleOpenEdit(student)}
+                                className="text-[11px] text-blue-700 hover:underline font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200"
+                              >
+                                由老師代設密碼
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -569,11 +773,11 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                         <div className="flex items-center space-x-1.5 bg-amber-50 p-1.5 rounded-xl border border-amber-200">
                           <button
                             onClick={() => handleOpenEdit(student)}
-                            title="老師修改學生進度步驟"
+                            title="老師修改學生進度或 6 位數密碼"
                             className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-stone-50 text-stone-800 border border-stone-200 text-xs font-bold flex items-center space-x-1 shadow-2xs transition-all cursor-pointer"
                           >
                             <Edit3 className="w-3.5 h-3.5 text-blue-600" />
-                            <span>修改進度</span>
+                            <span>修改進度 / 密碼</span>
                           </button>
                           <button
                             onClick={() => setDeletingStudent(student)}
@@ -756,24 +960,45 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                 <input
                   type="text"
                   required
-                  placeholder="請輸入管理帳號"
+                  placeholder="請輸入崔老師管理帳號"
                   value={teacherUsername}
                   onChange={(e) => setTeacherUsername(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl text-sm border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-stone-50 font-mono"
+                  autoComplete="username"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  管理員密碼
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-stone-700">
+                    管理員密碼
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowTeacherPasswordText(!showTeacherPasswordText)}
+                    className="text-[11px] text-stone-500 hover:text-stone-800 flex items-center space-x-1 cursor-pointer"
+                  >
+                    {showTeacherPasswordText ? (
+                      <>
+                        <EyeOff className="w-3.5 h-3.5" />
+                        <span>隱藏密碼</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>顯示密碼</span>
+                      </>
+                    )}
+                  </button>
+                </div>
                 <input
-                  type="password"
+                  type={showTeacherPasswordText ? 'text' : 'password'}
                   required
                   placeholder="請輸入管理密碼"
                   value={teacherPassword}
                   onChange={(e) => setTeacherPassword(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl text-sm border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-stone-50 font-mono"
+                  autoComplete="current-password"
                 />
               </div>
 
@@ -794,9 +1019,9 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-stone-900 hover:bg-black text-white shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-blue-700 hover:bg-blue-800 text-white shadow-xs flex items-center space-x-1.5 cursor-pointer"
                 >
-                  <ShieldCheck className="w-4 h-4 text-blue-400" />
+                  <ShieldCheck className="w-4 h-4 text-blue-200" />
                   <span>登入老師管理模式</span>
                 </button>
               </div>
@@ -816,10 +1041,10 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                 </div>
                 <div>
                   <h3 className="font-bold text-base text-stone-900">
-                    修改學生進度（老師管理權限）
+                    修改學生進度與密碼（老師管理權限）
                   </h3>
                   <p className="text-xs text-stone-500">
-                    學生：{editingStudent.studentName} ({editingStudent.studentEmail || '未綁定 Gmail'})
+                    學生：{editingStudent.studentName} ({editingStudent.studentEmail || '未設定 Email'})
                   </p>
                 </div>
               </div>
@@ -842,6 +1067,35 @@ export const StudentsProgressBoard: React.FC<Props> = ({
                   onChange={(e) => setEditStudentName(e.target.value)}
                   className="w-full px-3.5 py-2 rounded-xl text-sm border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-stone-50 font-bold text-stone-900"
                 />
+              </div>
+
+              {/* Student Password Management (Teacher View & Reset) */}
+              <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-amber-950 flex items-center space-x-1">
+                    <KeyRound className="w-3.5 h-3.5 text-amber-700" />
+                    <span>學生 6 位數登入密碼（老師可查看或重設）</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowEditPasswordText(!showEditPasswordText)}
+                    className="text-[11px] text-amber-850 hover:text-amber-950 font-bold flex items-center space-x-1 cursor-pointer"
+                  >
+                    {showEditPasswordText ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{showEditPasswordText ? '隱藏密碼' : '顯示明碼'}</span>
+                  </button>
+                </div>
+                <input
+                  type={showEditPasswordText ? "text" : "password"}
+                  maxLength={6}
+                  value={editStudentPassword}
+                  onChange={(e) => setEditStudentPassword(e.target.value)}
+                  placeholder="可輸入 6 位數新密碼（若留空學生初次登入時自訂）"
+                  className="w-full px-3.5 py-2 rounded-xl text-sm border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white font-mono font-bold tracking-widest text-stone-900"
+                />
+                <p className="text-[11px] text-amber-800 mt-1.5 leading-relaxed">
+                  💡 若學生忘記密碼，崔老師可直接在此查看其密碼告知學生；或直接在此輸入新的 6 位密碼並儲存，再告知學生新密碼即可。
+                </p>
               </div>
 
               {/* Step Selector */}
@@ -984,6 +1238,266 @@ export const StudentsProgressBoard: React.FC<Props> = ({
               >
                 <Trash2 className="w-4 h-4" />
                 <span>{isDeleting ? '刪除中...' : '確認永久刪除此帳號'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: Teacher Create Student Account Dialog */}
+      {showCreateStudentModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl border border-stone-200 space-y-5 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center">
+                  <UserPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-stone-900">
+                    建立新研究生帳號
+                  </h3>
+                  <p className="text-xs text-stone-500">崔老師專屬指導學生開立</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowCreateStudentModal(false)}
+                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateStudent} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  學生姓名 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="例如：王小明"
+                  value={newStudentName}
+                  onChange={(e) => setNewStudentName(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-sm border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-stone-50 font-medium text-stone-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  學生 Email 帳號 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="例如：student@school.edu.tw 或其常用 Email"
+                  value={newStudentEmail}
+                  onChange={(e) => setNewStudentEmail(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-sm border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-stone-50 font-mono text-stone-900"
+                />
+                <p className="text-[11px] text-stone-400 mt-1">
+                  學生登入時將以此 Email 作為帳號驗證。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  論文題目 / 研究方向（選填）
+                </label>
+                <input
+                  type="text"
+                  placeholder="例如：生成式 AI 融入教學設計之研究"
+                  value={newStudentTopic}
+                  onChange={(e) => setNewStudentTopic(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-sm border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-stone-50 text-stone-900"
+                />
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200">
+                <label className="block text-xs font-bold text-amber-950 mb-1 flex items-center space-x-1">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-700" />
+                  <span>初始 6 位數密碼（選填，可留空）</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  placeholder="留空 = 學生初次登入時自行建立 6 位密碼"
+                  value={newStudentPassword}
+                  onChange={(e) => setNewStudentPassword(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-xs border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white font-mono tracking-wider font-bold"
+                />
+                <p className="text-[11px] text-amber-800 mt-1">
+                  💡 若此處留空，學生初次使用其 Email 登入時系統會自動引導學生自訂 6 位數密碼；若老師預先指定亦可直接輸入 6 碼。
+                </p>
+              </div>
+
+              {createStudentError && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{createStudentError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateStudentModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-100 cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingStudent}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-blue-700 hover:bg-blue-800 text-white shadow-sm flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{isCreatingStudent ? '建立中...' : '確認建立學生帳號'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: Student Account & Password Roster */}
+      {showRosterModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-3xl w-full shadow-2xl border border-stone-200 space-y-5 animate-in fade-in zoom-in-95 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-stone-200 pb-4">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-stone-900">
+                    全體研究生帳號密碼總覽名冊
+                  </h3>
+                  <p className="text-xs text-stone-500">崔老師專屬查閱 • 學生忘記密碼時可隨時在此核對或複製</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowRosterModal(false)}
+                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick Filter */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="搜尋姓名或 Email..."
+                  value={rosterSearch}
+                  onChange={(e) => setRosterSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 rounded-xl text-xs border border-stone-200 bg-stone-50 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  setShowRosterModal(false);
+                  setCreateStudentError(null);
+                  setShowCreateStudentModal(true);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs flex items-center space-x-1 cursor-pointer shrink-0"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>+ 建立新學生</span>
+              </button>
+            </div>
+
+            {/* Roster Table */}
+            <div className="flex-1 overflow-y-auto border border-stone-200 rounded-2xl">
+              {(() => {
+                const filtered = students.filter(s => 
+                  (s.studentName || '').toLowerCase().includes(rosterSearch.toLowerCase()) ||
+                  (s.studentEmail || '').toLowerCase().includes(rosterSearch.toLowerCase())
+                );
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-8 text-center text-xs text-stone-500">
+                      尚未建立任何學生帳號，或無符合搜尋條件之學生。
+                    </div>
+                  );
+                }
+
+                return (
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-stone-50 text-stone-600 font-bold border-b border-stone-200 sticky top-0">
+                      <tr>
+                        <th className="p-3">姓名</th>
+                        <th className="p-3">Email 帳號</th>
+                        <th className="p-3">6 位數密碼</th>
+                        <th className="p-3">當前進度</th>
+                        <th className="p-3 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100">
+                      {filtered.map(s => (
+                        <tr key={s.studentId} className="hover:bg-blue-50/40 transition-colors">
+                          <td className="p-3 font-bold text-stone-900">
+                            {s.studentName}
+                          </td>
+                          <td className="p-3 font-mono text-stone-600">
+                            {s.studentEmail}
+                          </td>
+                          <td className="p-3">
+                            {s.password ? (
+                              <div className="flex items-center space-x-1.5">
+                                <span className="font-mono font-extrabold text-blue-950 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                  {s.password}
+                                </span>
+                                <button
+                                  onClick={() => handleCopyPassword(s.studentId, s.password!)}
+                                  title="複製密碼提供給學生"
+                                  className="p-1 hover:bg-stone-200 rounded text-stone-500 cursor-pointer"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                                {copiedId === s.studentId && (
+                                  <span className="text-[10px] text-blue-700 font-bold">已複製</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-[11px]">
+                                初次登入待自訂
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 font-semibold text-stone-700">
+                            第 {s.currentStepNumber || 1} 步 / 27 步
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => {
+                                setShowRosterModal(false);
+                                handleOpenEdit(s);
+                              }}
+                              className="px-2 py-1 rounded bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-[11px] cursor-pointer"
+                            >
+                              修改 / 重設
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-stone-500 pt-2 border-t border-stone-100">
+              <span>共計 {students.length} 位研究生名冊</span>
+              <button
+                type="button"
+                onClick={() => setShowRosterModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-stone-900 text-white hover:bg-black cursor-pointer"
+              >
+                關閉名冊
               </button>
             </div>
           </div>

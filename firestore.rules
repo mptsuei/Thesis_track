@@ -20,7 +20,8 @@ service cloud.firestore {
              data.studentName is string && data.studentName.size() <= 100 &&
              data.completedSteps is list && data.completedSteps.size() <= 35 &&
              (!('currentPhase' in data) || (data.currentPhase is number)) &&
-             (!('studentEmail' in data) || (data.studentEmail is string && data.studentEmail.size() <= 150));
+             (!('studentEmail' in data) || (data.studentEmail is string && data.studentEmail.size() <= 150)) &&
+             (!('password' in data) || (data.password is string && data.password.size() <= 50));
     }
 
     match /student_progress/{studentId} {

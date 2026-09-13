@@ -147,5 +147,6 @@ export interface StudentProgressRecord {
   completedSteps: string[];
   stepDates: Record<string, string>;
   stepNotes: Record<string, string>;
+  password?: string;
   lastUpdated: string;
 }

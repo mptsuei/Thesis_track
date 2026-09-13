@@ -57,6 +57,11 @@
         "lastUpdated": {
           "type": "string",
           "description": "ISO timestamp of the latest update"
+        },
+        "password": {
+          "type": "string",
+          "description": "6-digit access password set by student on first login or managed by teacher",
+          "maxLength": 50
         }
       },
       "required": ["studentId", "studentName", "completedSteps"]

@@ -147,7 +147,7 @@ E-mail: XXXXXX`;
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-blue-50 via-sky-50 to-indigo-50/60 rounded-3xl p-6 sm:p-8 text-stone-900 border border-blue-200/80 shadow-xs relative overflow-hidden">
+      <div className="bg-gradient-to-r from-blue-100/90 via-sky-100/80 to-blue-200/90 rounded-3xl p-6 sm:p-8 text-blue-950 border border-blue-300/80 shadow-xs relative overflow-hidden">
         <div className="absolute right-0 top-0 text-blue-900/10 pointer-events-none translate-x-12 -translate-y-6">
           <BookOpen className="w-80 h-80" />
         </div>
@@ -160,7 +160,7 @@ E-mail: XXXXXX`;
             崔老師論文指導研究生必讀
           </h1>
           <p className="text-sm text-blue-900/85 leading-relaxed">
-            By Mengping Tsuei ＆ 畢業學長姐過來人經驗血淚傳承。論文研究是研究所最嚴謹的學術訓練歷程，請每位研究生牢記在心、反覆研讀並嚴格自律落實。
+            By Mengping Tsuei 
           </p>
         </div>
 

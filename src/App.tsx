@@ -52,7 +52,7 @@ export function App() {
           <div className="flex items-center space-x-4 text-stone-400">
             <span>Firebase 雲端即時同步</span>
             <span>•</span>
-            <span>學生 Gmail 驗證</span>
+            <span>學生帳號密碼登入</span>
             <span>•</span>
             <span>單向推進不可刪除原則</span>
           </div>
